@@ -1392,8 +1392,8 @@ static jl_cgval_t typed_load(Value *ptr, Value *idx_0based, jl_value_t *jltype,
         }
     //}
     if (isbool)
-        return mark_julia_type(builder.CreateTrunc(elt, T_int1), false, jltype);
-    return mark_julia_type(elt, isboxed, jltype);
+        return mark_julia_type(builder.CreateTrunc(elt, T_int1), false, jltype, ctx);
+    return mark_julia_type(elt, isboxed, jltype, ctx);
 }
 
 static void typed_store(Value *ptr, Value *idx_0based, const jl_cgval_t &rhs,
@@ -1546,7 +1546,7 @@ static bool emit_getfield_unknownidx(jl_cgval_t *ret, const jl_cgval_t &strct, V
                             idx)));
             if ((unsigned)stt->ninitialized != nfields)
                 null_pointer_check(fld, ctx);
-            *ret = mark_julia_type(fld, true, jl_any_type);
+            *ret = mark_julia_type(fld, true, jl_any_type, ctx);
             ret->needsgcroot = strct.needsgcroot || !strct.isimmutable;
             return true;
         }
@@ -1565,7 +1565,7 @@ static bool emit_getfield_unknownidx(jl_cgval_t *ret, const jl_cgval_t &strct, V
 #else
             Value *fld = builder.CreateCall2(prepare_call(jlgetnthfieldchecked_func), strct.V, idx);
 #endif
-            *ret = mark_julia_type(fld, true, jl_any_type);
+            *ret = mark_julia_type(fld, true, jl_any_type, ctx);
             return true;
         }
     }
@@ -1595,7 +1595,7 @@ static bool emit_getfield_unknownidx(jl_cgval_t *ret, const jl_cgval_t &strct, V
         if (jt == (jl_value_t*)jl_bool_type) {
             fld = builder.CreateTrunc(fld, T_int1);
         }
-        *ret = mark_julia_type(fld, false, jt);
+        *ret = mark_julia_type(fld, false, jt, ctx);
         return true;
     }
     return false;
@@ -1622,7 +1622,7 @@ static jl_cgval_t emit_getfield_knownidx(const jl_cgval_t &strct, unsigned idx, 
             Value *fldv = tbaa_decorate(tbaa, builder.CreateLoad(builder.CreateBitCast(addr, T_ppjlvalue)));
             if (idx >= (unsigned)jt->ninitialized)
                 null_pointer_check(fldv, ctx);
-            jl_cgval_t ret = mark_julia_type(fldv, true, jfty);
+            jl_cgval_t ret = mark_julia_type(fldv, true, jfty, ctx);
             ret.needsgcroot = strct.needsgcroot || !strct.isimmutable;
             return ret;
         }
@@ -1650,7 +1650,7 @@ static jl_cgval_t emit_getfield_knownidx(const jl_cgval_t &strct, unsigned idx, 
             fldv = builder.CreateTrunc(fldv, T_int1);
         }
         assert(!jl_field_isptr(jt, idx));
-        return mark_julia_type(fldv, false, jfty);
+        return mark_julia_type(fldv, false, jfty, ctx);
     }
 }
 
@@ -2044,7 +2044,7 @@ static void emit_cpointercheck(const jl_cgval_t &x, const std::string &msg,
                                jl_codectx_t *ctx)
 {
     Value *t = emit_typeof(x);
-    emit_typecheck(mark_julia_type(t, true, jl_any_type), (jl_value_t*)jl_datatype_type, msg, ctx);
+    emit_typecheck(mark_julia_type(t, true, jl_any_type, ctx), (jl_value_t*)jl_datatype_type, msg, ctx);
 
     Value *istype =
         builder.CreateICmpEQ(emit_nthptr(t, (ssize_t)(offsetof(jl_datatype_t,name)/sizeof(char*)), tbaa_datatype),
@@ -2190,7 +2190,7 @@ static jl_cgval_t emit_new_struct(jl_value_t *ty, size_t nargs, jl_value_t **arg
                 }
                 idx++;
             }
-            return mark_julia_type(strct, false, ty);
+            return mark_julia_type(strct, false, ty, ctx);
         }
         Value *f1 = NULL;
         size_t j = 0;
@@ -2206,11 +2206,11 @@ static jl_cgval_t emit_new_struct(jl_value_t *ty, size_t nargs, jl_value_t **arg
         Value *strct = emit_allocobj(sty->size);
         if (nf > j)
             make_gcrooted(strct, ctx);
-        jl_cgval_t strctinfo = mark_julia_type(strct, true, ty);
+        jl_cgval_t strctinfo = mark_julia_type(strct, true, ty, ctx);
         builder.CreateStore(literal_pointer_val((jl_value_t*)ty),
                             emit_typeptr_addr(strct));
         if (f1) {
-            jl_cgval_t f1info = mark_julia_type(f1, true, jl_any_type);
+            jl_cgval_t f1info = mark_julia_type(f1, true, jl_any_type, ctx);
             if (!jl_subtype(expr_type(args[1],ctx), jl_field_type(sty,0), 0))
                 emit_typecheck(f1info, jl_field_type(sty,0), "new", ctx);
             emit_setfield(sty, strctinfo, 0, f1info, ctx, false, false);
@@ -2250,7 +2250,7 @@ static jl_cgval_t emit_new_struct(jl_value_t *ty, size_t nargs, jl_value_t **arg
             return emit_unboxed(args[1], ctx);  // do side effects
         Type *lt = julia_type_to_llvm(ty);
         assert(lt != T_pjlvalue);
-        return mark_julia_type(UndefValue::get(lt), false, ty);
+        return mark_julia_type(UndefValue::get(lt), false, ty, ctx);
     }
     else {
         // 0 fields, singleton
