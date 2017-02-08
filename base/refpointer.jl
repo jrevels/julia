@@ -1,5 +1,19 @@
 # This file is a part of Julia. License is MIT: http://julialang.org/license
 
+"""
+    Ref{T}
+
+An object that safely references data of type `T`. This type is guaranteed to point to
+valid, Julia-allocated memory of the correct type. The underlying data is protected from
+freeing by the garbage collector as long as the `Ref` itself is referenced.
+
+When passed as a `ccall` argument (either as a `Ptr` or `Ref` type), a `Ref` object will be
+converted to a native pointer to the data it references.
+
+There is no invalid (NULL) `Ref`.
+"""
+Ref
+
 # C NUL-terminated string pointers; these can be used in ccall
 # instead of Ptr{Cchar} and Ptr{Cwchar_t}, respectively, to enforce
 # a check for embedded NUL chars in the string (to avoid silent truncation).
@@ -23,10 +37,11 @@ unsafe_convert{T}(::Type{Ref{T}}, x) = unsafe_convert(Ptr{T}, x)
 
 type RefValue{T} <: Ref{T}
     x::T
-    RefValue() = new()
-    RefValue(x) = new(x)
+    RefValue{T}() where T = new()
+    RefValue{T}(x) where T = new(x)
 end
 RefValue{T}(x::T) = RefValue{T}(x)
+isassigned(x::RefValue) = isdefined(x, :x)
 
 Ref(x::Ref) = x
 Ref(x::Any) = RefValue(x)
@@ -49,11 +64,11 @@ end
 unsafe_convert{T}(::Type{Ptr{Void}}, b::RefValue{T}) = convert(Ptr{Void}, unsafe_convert(Ptr{T}, b))
 
 ### Methods for a Ref object that is backed by an array at index i
-immutable RefArray{T, A<:AbstractArray, R} <: Ref{T}
+immutable RefArray{T, A<:AbstractArray{T}, R} <: Ref{T}
     x::A
     i::Int
     roots::R # should be either ::Void or ::Any
-    RefArray(x,i,roots=nothing) = (@assert(eltype(A) == T); new(x,i,roots))
+    RefArray{T,A,R}(x,i,roots=nothing) where {T,A<:AbstractArray{T},R} = new(x,i,roots)
 end
 RefArray{T}(x::AbstractArray{T},i::Int,roots::Any) = RefArray{T,typeof(x),Any}(x, i, roots)
 RefArray{T}(x::AbstractArray{T},i::Int=1,roots::Void=nothing) = RefArray{T,typeof(x),Void}(x, i, nothing)

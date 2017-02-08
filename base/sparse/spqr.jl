@@ -54,14 +54,14 @@ type Factorization{Tv<:VTypes} <: Base.LinAlg.Factorization{Tv}
     m::Int
     n::Int
     p::Ptr{C_Factorization{Tv}}
-    function Factorization(m::Integer, n::Integer, p::Ptr{C_Factorization{Tv}})
+    function Factorization{Tv}(m::Integer, n::Integer, p::Ptr{C_Factorization{Tv}}) where Tv<:VTypes
         if p == C_NULL
             throw(ArgumentError("factorization failed for unknown reasons. Please submit a bug report."))
         end
         new(m, n, p)
     end
 end
-Factorization{Tv<:VTypes}(m::Integer, n::Integer, p::Ptr{C_Factorization{Tv}}) = Factorization{Tv}(m, n, p)
+Factorization(m::Integer, n::Integer, p::Ptr{C_Factorization{Tv}}) where Tv<:VTypes = Factorization{Tv}(m, n, p)
 
 size(F::Factorization) = (F.m, F.n)
 function size(F::Factorization, i::Integer)
@@ -143,7 +143,7 @@ qrfact(A::SparseMatrixCSC, ::Type{Val{true}}) = factorize(ORDERING_DEFAULT, DEFA
     qrfact(A) -> SPQR.Factorization
 
 Compute the `QR` factorization of a sparse matrix `A`. A fill-reducing permutation is used.
-The main application of this type is to solve least squares problems with `\\`. The function
+The main application of this type is to solve least squares problems with [`\\`](@ref). The function
 calls the C library SPQR and a few additional functions from the library are wrapped but not
 exported.
 """

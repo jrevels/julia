@@ -3,8 +3,8 @@
 type Set{T} <: AbstractSet{T}
     dict::Dict{T,Void}
 
-    Set() = new(Dict{T,Void}())
-    Set(itr) = union!(new(Dict{T,Void}()), itr)
+    Set{T}() where T = new(Dict{T,Void}())
+    Set{T}(itr) where T = union!(new(Dict{T,Void}()), itr)
 end
 Set() = Set{Any}()
 Set(itr) = Set{eltype(itr)}(itr)
@@ -113,7 +113,15 @@ const ⊆ = issubset
     unique(itr)
 
 Returns an array containing one value from `itr` for each unique value,
-as determined by `isequal`.
+as determined by [`isequal`](@ref).
+
+```jldoctest
+julia> unique([1; 2; 2; 6])
+3-element Array{Int64,1}:
+ 1
+ 2
+ 6
+```
 """
 function unique(C)
     out = Vector{eltype(C)}()
@@ -132,6 +140,13 @@ end
 
 Returns an array containing one value from `itr` for each unique value produced by `f`
 applied to elements of `itr`.
+
+```jldoctest
+julia> unique(isodd, [1; 2; 2; 6])
+2-element Array{Int64,1}:
+ 1
+ 2
+```
 """
 function unique(f::Callable, C)
     out = Vector{eltype(C)}()
@@ -147,9 +162,20 @@ function unique(f::Callable, C)
 end
 
 """
-    allunique(itr)
+    allunique(itr) -> Bool
 
-Return `true` if all values from `itr` are distinct when compared with `isequal`.
+Return `true` if all values from `itr` are distinct when compared with [`isequal`](@ref).
+
+```jldoctest
+julia> a = [1; 2; 3]
+3-element Array{Int64,1}:
+ 1
+ 2
+ 3
+
+julia> allunique([a, a])
+false
+```
 """
 function allunique(C)
     seen = Set{eltype(C)}()
@@ -165,7 +191,7 @@ end
 
 allunique(::Set) = true
 
-allunique{T}(r::Range{T}) = (step(r) != zero(T)) || (length(r) <= one(T))
+allunique{T}(r::Range{T}) = (step(r) != zero(T)) || (length(r) <= 1)
 
 function filter(f, s::Set)
     u = similar(s)
@@ -189,7 +215,10 @@ const hashs_seed = UInt === UInt64 ? 0x852ada37cfe8e0ce : 0xcfe8e0ce
 function hash(s::Set, h::UInt)
     h = hash(hashs_seed, h)
     for x in s
-        h $= hash(x)
+        h ⊻= hash(x)
     end
     return h
 end
+
+convert{T}(::Type{Set{T}}, s::Set{T}) = s
+convert{T,S}(::Type{Set{T}}, x::Set{S}) = Set{T}(x)

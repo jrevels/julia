@@ -6,6 +6,7 @@ immutable Irrational{sym} <: Real end
 
 show{sym}(io::IO, x::Irrational{sym}) = print(io, "$sym = $(string(float(x))[1:15])...")
 
+promote_rule{s}(::Type{Irrational{s}}, ::Type{Float16}) = Float16
 promote_rule{s}(::Type{Irrational{s}}, ::Type{Float32}) = Float32
 promote_rule{s,t}(::Type{Irrational{s}}, ::Type{Irrational{t}}) = Float64
 promote_rule{s,T<:Number}(::Type{Irrational{s}}, ::Type{T}) = promote_type(Float64,T)
@@ -57,27 +58,41 @@ end
     x < big(y)
 end
 
-<=(x::Irrational,y::AbstractFloat) = x < y
-<=(x::AbstractFloat,y::Irrational) = x < y
+<=(x::Irrational, y::AbstractFloat) = x < y
+<=(x::AbstractFloat, y::Irrational) = x < y
 
 # Irrational vs Rational
-@generated function <{T}(x::Irrational, y::Rational{T})
-    bx = big(x())
-    bx < 0 && T <: Unsigned && return true
-    rx = rationalize(T,bx,tol=0)
-    rx < bx ? :($rx < y) : :($rx <= y)
+@pure function rationalize{T<:Integer}(::Type{T}, x::Irrational; tol::Real=0)
+    return rationalize(T, big(x), tol=tol)
 end
-@generated function <{T}(x::Rational{T}, y::Irrational)
-    by = big(y())
-    by < 0 && T <: Unsigned && return false
-    ry = rationalize(T,by,tol=0)
-    ry < by ? :(x <= $ry) : :(x < $ry)
+@pure function lessrational{T<:Integer}(rx::Rational{T}, x::Irrational)
+    # an @pure version of `<` for determining if the rationalization of
+    # an irrational number required rounding up or down
+    return rx < big(x)
+end
+function <{T}(x::Irrational, y::Rational{T})
+    T <: Unsigned && x < 0.0 && return true
+    rx = rationalize(T, x)
+    if lessrational(rx, x)
+        return rx < y
+    else
+        return rx <= y
+    end
+end
+function <{T}(x::Rational{T}, y::Irrational)
+    T <: Unsigned && y < 0.0 && return false
+    ry = rationalize(T, y)
+    if lessrational(ry, y)
+        return x <= ry
+    else
+        return x < ry
+    end
 end
 <(x::Irrational, y::Rational{BigInt}) = big(x) < y
 <(x::Rational{BigInt}, y::Irrational) = x < big(y)
 
-<=(x::Irrational,y::Rational) = x < y
-<=(x::Rational,y::Irrational) = x < y
+<=(x::Irrational, y::Rational) = x < y
+<=(x::Rational, y::Irrational) = x < y
 
 isfinite(::Irrational) = true
 
@@ -116,7 +131,7 @@ end
 
 big(x::Irrational) = convert(BigFloat,x)
 
-## specific irriational mathematical constants
+## specific irrational mathematical constants
 
 @irrational π        3.14159265358979323846  pi
 @irrational e        2.71828182845904523536  exp(big(1))
@@ -168,13 +183,9 @@ catalan
 
 # use exp for e^x or e.^x, as in
 #    ^(::Irrational{:e}, x::Number) = exp(x)
-#    .^(::Irrational{:e}, x) = exp(x)
 # but need to loop over types to prevent ambiguity with generic rules for ^(::Number, x) etc.
 for T in (Irrational, Rational, Integer, Number)
     ^(::Irrational{:e}, x::T) = exp(x)
-end
-for T in (Range, BitArray, StridedArray, AbstractArray)
-    .^(::Irrational{:e}, x::T) = exp.(x)
 end
 
 log(::Irrational{:e}) = 1 # use 1 to correctly promote expressions like log(x)/log(e)

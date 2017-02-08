@@ -37,8 +37,8 @@ io.readable = false
 @test_throws ArgumentError read!(io,UInt8[0])
 truncate(io, 0)
 @test write(io,"boston\ncambridge\n") > 0
-@test takebuf_string(io) == "boston\ncambridge\n"
-@test takebuf_string(io) == ""
+@test String(take!(io)) == "boston\ncambridge\n"
+@test String(take!(io)) == ""
 @test write(io, Complex{Float64}(0)) == 16
 @test write(io, Rational{Int64}(1//2)) == 16
 close(io)
@@ -49,7 +49,7 @@ end
 
 let io = IOBuffer("hamster\nguinea pig\nturtle")
 @test position(io) == 0
-@test readline(io) == "hamster\n"
+@test readline(io) == "hamster"
 @test readstring(io) == "guinea pig\nturtle"
 @test_throws EOFError read(io,UInt8)
 seek(io,0)
@@ -57,8 +57,8 @@ seek(io,0)
 @test_throws ArgumentError truncate(io,0)
 @test_throws ArgumentError write(io,UInt8(0))
 @test_throws ArgumentError write(io,UInt8[0])
-@test takebuf_string(io) == "hamster\nguinea pig\nturtle"
-@test takebuf_string(io) == "hamster\nguinea pig\nturtle" #should be unchanged
+@test String(take!(io)) == "hamster\nguinea pig\nturtle"
+@test String(take!(io)) == "hamster\nguinea pig\nturtle" #should be unchanged
 close(io)
 end
 
@@ -66,14 +66,28 @@ let io = PipeBuffer()
 @test_throws EOFError read(io,UInt8)
 @test write(io,"pancakes\nwaffles\nblueberries\n") > 0
 @test position(io) == 0
-@test readline(io) == "pancakes\n"
+@test readline(io) == "pancakes"
 Base.compact(io)
-@test readline(io) == "waffles\n"
+@test readline(io) == "waffles"
 @test write(io,"whipped cream\n") > 0
-@test readline(io) == "blueberries\n"
+@test readline(io) == "blueberries"
 @test_throws ArgumentError seek(io,0)
 @test_throws ArgumentError truncate(io,0)
-@test readline(io) == "whipped cream\n"
+@test readline(io) == "whipped cream"
+@test write(io,"pancakes\nwaffles\nblueberries\n") > 0
+@test readlines(io) == String["pancakes", "waffles", "blueberries"]
+write(io,"\n\r\n\n\r \n") > 0
+@test readlines(io, chomp=false) == String["\n", "\r\n", "\n", "\r \n"]
+write(io,"\n\r\n\n\r \n") > 0
+@test readlines(io, chomp=true) == String["", "", "", "\r "]
+@test write(io,"α\nβ\nγ\nδ") > 0
+@test readlines(io, chomp=false) == String["α\n","β\n","γ\n","δ"]
+@test write(io,"α\nβ\nγ\nδ") > 0
+@test readlines(io, chomp=true) == String["α", "β", "γ", "δ"]
+@test readlines(IOBuffer(""), chomp=false) == []
+@test readlines(IOBuffer(""), chomp=true) == []
+@test readlines(IOBuffer("first\nsecond"), chomp=false) == String["first\n", "second"]
+@test readlines(IOBuffer("first\nsecond"), chomp=true) == String["first", "second"]
 Base.compact(io)
 @test position(io) == 0
 @test ioslength(io) == 0
@@ -103,7 +117,7 @@ write(io,[1,2,3])
 skip(io,1)
 @test write(io,UInt8(104)) == 1
 skip(io,3)
-@test write(io,"apples".data) == 3
+@test write(io,b"apples") == 3
 skip(io,71)
 @test write(io,'y') == 1
 @test readstring(io) == "happy"
@@ -118,8 +132,8 @@ write(io,'e')
 @test length(io.data) == 75
 @test position(io) == 0
 skip(io,72)
-@test takebuf_string(io) == "\0ab"
-@test takebuf_string(io) == ""
+@test String(take!(io)) == "\0ab"
+@test String(take!(io)) == ""
 
 # issues 4021
 print(io, true)
@@ -133,7 +147,7 @@ a = Array{UInt8}(1024)
 @test eof(io)
 end
 
-@test isempty(readlines(IOBuffer()))
+@test isempty(readlines(IOBuffer(), chomp=false))
 
 # issue #8193
 let io=IOBuffer("asdf")
@@ -166,13 +180,13 @@ let io=IOBuffer(SubString("***αhelloworldω***",4,16)), io2 = IOBuffer(b"goodni
     @test readstring(io) == "dω"
     @test String(io) == "αhelloworldω"
     @test_throws ArgumentError write(io,"!")
-    @test takebuf_array(io) == b"αhelloworldω"
+    @test take!(io) == b"αhelloworldω"
     seek(io, 2)
     seekend(io2)
     write(io2, io)
     @test readstring(io) == ""
     @test readstring(io2) == ""
-    @test takebuf_string(io) == "αhelloworldω"
+    @test String(take!(io)) == "αhelloworldω"
     seek(io2, 0)
     truncate(io2, io2.size - 2)
     @test readstring(io2) == "goodnightmoonhelloworld"
@@ -213,3 +227,8 @@ let bstream = BufferStream()
 end
 
 @test flush(IOBuffer()) === nothing # should be a no-op
+
+# pr #19461
+let io = IOBuffer()
+    @test Base.buffer_writes(io) === io
+end

@@ -144,20 +144,16 @@ jl_get_ptls_states_func jl_get_ptls_states_getter(void)
 // However, since the detection of the static version in `ifunc`
 // is not guaranteed to be reliable, we still need to fallback to the wrapper
 // version as the symbol address if we didn't find the static version in `ifunc`.
-#if defined(__GLIBC__) && (defined(_CPU_X86_64_) || defined(_CPU_X86_) || \
-                          ((defined(_CPU_AARCH64_) || defined(_CPU_ARM_)) && \
-                            __GNUC__ >= 6))
-// Only enable this on architectures that are tested.
-// For example, GCC doesn't seem to support the `ifunc` attribute on power yet.
-#  if __GLIBC_PREREQ(2, 12)
+#if defined(__GLIBC__) && defined(JULIA_HAS_IFUNC_SUPPORT)
+// Make sure both the compiler and the glibc supports it.
+// Only enable this on known working glibc versions.
+#  if (defined(_CPU_X86_) || defined(_CPU_X86_64_)) && __GLIBC_PREREQ(2, 12)
+#    define JL_TLS_USE_IFUNC
+#  elif (defined(_CPU_ARM_) || defined(_CPU_AARCH64_)) && __GLIBC_PREREQ(2, 18)
+// This is the oldest tested version that supports ifunc.
 #    define JL_TLS_USE_IFUNC
 #  endif
-#endif
-// Disable ifunc on clang <= 3.8 since it is not supported
-#if defined(JL_TLS_USE_IFUNC) && defined(__clang__)
-#  if __clang_major__ < 3 || (__clang_major__ == 3 && __clang_minor__ <= 8)
-#    undef JL_TLS_USE_IFUNC
-#  endif
+// TODO: PPC probably supports ifunc on some glibc versions too
 #endif
 // fallback provided for embedding
 static JL_CONST_FUNC jl_ptls_t jl_get_ptls_states_fallback(void)
@@ -270,6 +266,9 @@ static void ti_initthread(int16_t tid)
     ptls->tid = tid;
     ptls->pgcstack = NULL;
     ptls->gc_state = 0; // GC unsafe
+    ptls->gc_cache.perm_scanned_bytes = 0;
+    ptls->gc_cache.scanned_bytes = 0;
+    ptls->gc_cache.nbig_obj = 0;
     // Conditionally initialize the safepoint address. See comment in
     // `safepoint.c`
     if (tid == 0) {
@@ -403,10 +402,13 @@ void ti_threadfun(void *arg)
                 int8_t gc_state = jl_gc_unsafe_enter(ptls);
                 // This is probably always NULL for now
                 jl_module_t *last_m = ptls->current_module;
+                size_t last_age = ptls->world_age;
                 JL_GC_PUSH1(&last_m);
                 ptls->current_module = work->current_module;
+                ptls->world_age = work->world_age;
                 ti_run_fun(work->args);
                 ptls->current_module = last_m;
+                ptls->world_age = last_age;
                 JL_GC_POP();
                 jl_gc_unsafe_leave(ptls, gc_state);
             }
@@ -670,6 +672,7 @@ JL_DLLEXPORT jl_value_t *jl_threading_run(jl_svec_t *args)
     threadwork.args = args;
     threadwork.ret = jl_nothing;
     threadwork.current_module = ptls->current_module;
+    threadwork.world_age = ptls->world_age;
 
 #if PROFILE_JL_THREADING
     uint64_t tcompile = uv_hrtime();
@@ -693,10 +696,8 @@ JL_DLLEXPORT jl_value_t *jl_threading_run(jl_svec_t *args)
     user_ns[ptls->tid] += (trun - tfork);
 #endif
 
-    jl_gc_state_set(ptls, JL_GC_STATE_SAFE, 0);
     // wait for completion (TODO: nowait?)
     ti_threadgroup_join(tgworld, ptls->tid);
-    jl_gc_state_set(ptls, 0, JL_GC_STATE_SAFE);
 
 #if PROFILE_JL_THREADING
     uint64_t tjoin = uv_hrtime();
@@ -782,6 +783,13 @@ void jl_init_threading(void)
 void jl_start_threads(void) { }
 
 #endif // !JULIA_ENABLE_THREADING
+
+// Make gc alignment available for threading
+// see threads.jl alignment
+JL_DLLEXPORT int jl_alignment(size_t sz)
+{
+    return jl_gc_alignment(sz);
+}
 
 #ifdef __cplusplus
 }

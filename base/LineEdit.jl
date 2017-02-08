@@ -211,7 +211,7 @@ function refresh_multi_line(termbuf::TerminalBuffer, terminal::UnixTerminal, buf
     seek(buf, 0)
     moreinput = true # add a blank line if there is a trailing newline on the last line
     while moreinput
-        l = readline(buf)
+        l = readline(buf, chomp=false)
         moreinput = endswith(l, "\n")
         # We need to deal with on-screen characters, so use strwidth to compute occupied columns
         llength = strwidth(l)
@@ -267,7 +267,7 @@ function refresh_multi_line(terminal::UnixTerminal, args...; kwargs...)
     termbuf = TerminalBuffer(outbuf)
     ret = refresh_multi_line(termbuf, terminal, args...;kwargs...)
     # Output the entire refresh at once
-    write(terminal, takebuf_array(outbuf))
+    write(terminal, take!(outbuf))
     flush(terminal)
     return ret
 end
@@ -437,7 +437,7 @@ function splice_buffer!{T<:Integer}(buf::IOBuffer, r::UnitRange{T}, ins::Abstrac
     elseif pos > last(r)
         seek(buf, pos - length(r))
     end
-    splice!(buf.data, r .+ 1, ins.data) # position(), etc, are 0-indexed
+    splice!(buf.data, r + 1, Vector{UInt8}(ins)) # position(), etc, are 0-indexed
     buf.size = buf.size + sizeof(ins) - length(r)
     seek(buf, position(buf) + sizeof(ins))
 end
@@ -549,7 +549,7 @@ end
 function edit_kill_line(s::MIState)
     buf = buffer(s)
     pos = position(buf)
-    killbuf = readline(buf)
+    killbuf = readline(buf, chomp=false)
     if length(killbuf) > 1 && killbuf[end] == '\n'
         killbuf = killbuf[1:end-1]
         char_move_left(buf)
@@ -626,9 +626,10 @@ default_enter_cb(_) = true
 
 write_prompt(terminal, s::PromptState) = write_prompt(terminal, s.p)
 function write_prompt(terminal, p::Prompt)
-    prefix = isa(p.prompt_prefix,Function) ? p.prompt_prefix() : p.prompt_prefix
-    suffix = isa(p.prompt_suffix,Function) ? p.prompt_suffix() : p.prompt_suffix
+    prefix = isa(p.prompt_prefix,Function) ? eval(Expr(:call, p.prompt_prefix)) : p.prompt_prefix
+    suffix = isa(p.prompt_suffix,Function) ? eval(Expr(:call, p.prompt_suffix)) : p.prompt_suffix
     write(terminal, prefix)
+    write(terminal, Base.text_colors[:bold])
     write(terminal, p.prompt)
     write(terminal, Base.text_colors[:normal])
     write(terminal, suffix)
@@ -668,7 +669,7 @@ function normalize_key(key::AbstractString)
             write(buf, c)
         end
     end
-    return takebuf_string(buf)
+    return String(take!(buf))
 end
 
 function normalize_keys(keymap::Dict)
@@ -733,7 +734,7 @@ end
 keymap_fcn(f::Void, c) = (s, p) -> return :ok
 function keymap_fcn(f::Function, c)
     return function (s, p)
-        r = f(s, p, c)
+        r = eval(Expr(:call,f,s, p, c))
         if isa(r, Symbol)
             return r
         else
@@ -1013,10 +1014,10 @@ type HistoryPrompt{T<:HistoryProvider} <: TextInterface
     hp::T
     complete
     keymap_dict::Dict{Char,Any}
-    HistoryPrompt(hp) = new(hp, EmptyCompletionProvider())
+    HistoryPrompt{T}(hp) where T<:HistoryProvider = new(hp, EmptyCompletionProvider())
 end
 
-HistoryPrompt{T<:HistoryProvider}(hp::T) = HistoryPrompt{T}(hp)
+HistoryPrompt(hp::T) where T<:HistoryProvider = HistoryPrompt{T}(hp)
 init_state(terminal, p::HistoryPrompt) = SearchState(terminal, p, true, IOBuffer(), IOBuffer())
 
 type PrefixSearchState <: ModeState
@@ -1053,10 +1054,11 @@ type PrefixHistoryPrompt{T<:HistoryProvider} <: TextInterface
     parent_prompt::Prompt
     complete
     keymap_dict::Dict{Char,Any}
-    PrefixHistoryPrompt(hp, parent_prompt) = new(hp, parent_prompt, EmptyCompletionProvider())
+    PrefixHistoryPrompt{T}(hp, parent_prompt) where T<:HistoryProvider =
+        new(hp, parent_prompt, EmptyCompletionProvider())
 end
 
-PrefixHistoryPrompt{T<:HistoryProvider}(hp::T, parent_prompt) = PrefixHistoryPrompt{T}(hp, parent_prompt)
+PrefixHistoryPrompt(hp::T, parent_prompt) where T<:HistoryProvider = PrefixHistoryPrompt{T}(hp, parent_prompt)
 init_state(terminal, p::PrefixHistoryPrompt) = PrefixSearchState(terminal, p, "", IOBuffer())
 
 write_prompt(terminal, s::PrefixSearchState) = write_prompt(terminal, s.histprompt.parent_prompt)
@@ -1305,7 +1307,7 @@ end
 """
 `Base.LineEdit.tabwidth` controls the presumed tab width of code pasted into the REPL.
 
-You can modify it by doing `eval(Base.LineEdit, :(tabwidth = 4))`, for example.
+You can modify it by doing `@eval Base.LineEdit tabwidth = 4`, for example.
 
 Must satisfy `0 < tabwidth <= 16`.
 """
@@ -1501,7 +1503,7 @@ end
 activate(m::ModalInterface, s::MIState, termbuf, term::TextTerminal) =
     activate(s.current_mode, s, termbuf, term)
 
-commit_changes(t::UnixTerminal, termbuf) = write(t, takebuf_array(termbuf.out_stream))
+commit_changes(t::UnixTerminal, termbuf) = write(t, take!(termbuf.out_stream))
 function transition(f::Function, s::MIState, mode)
     if mode === :abort
         s.aborted = true

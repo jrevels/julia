@@ -1,7 +1,11 @@
 # This file is a part of Julia. License is MIT: http://julialang.org/license
 
+const curmod = current_module()
+const curmod_name = fullname(curmod)
+const curmod_prefix = "$(["$m." for m in curmod_name]...)"
+
 # REPL tests
-isdefined(:TestHelpers) || include(joinpath(dirname(@__FILE__), "TestHelpers.jl"))
+isdefined(Main, :TestHelpers) || @eval Main include(joinpath(dirname(@__FILE__), "TestHelpers.jl"))
 using TestHelpers
 import Base: REPL, LineEdit
 
@@ -38,12 +42,15 @@ if !is_windows() || Sys.windows_version() >= Sys.WINDOWS_VISTA_VER
         Base.REPL.run_repl(repl)
     end
 
-    sendrepl(cmd) = write(stdin_write,"inc || wait(b); r = $cmd; notify(c); r\r")
+    sendrepl(cmd) = begin
+        write(stdin_write,"$(curmod_prefix)inc || wait($(curmod_prefix)b); r = $cmd; notify($(curmod_prefix)c); r\r")
+    end
 
     inc = false
     b = Condition()
     c = Condition()
     sendrepl("\"Hello REPL\"")
+
     inc=true
     begin
         notify(b)
@@ -412,13 +419,12 @@ begin
     end
 
     c = Condition()
-
-    sendrepl2(cmd) = write(stdin_write,"$cmd\n notify(c)\n")
+    sendrepl2(cmd) = write(stdin_write,"$cmd\n notify($(curmod_prefix)c)\n")
 
     # Test removal of prefix in single statement paste
     sendrepl2("\e[200~julia> A = 2\e[201~\n")
     wait(c)
-    @test A == 2
+    @test Main.A == 2
 
     # Test removal of prefix in multiple statement paste
     sendrepl2("""\e[200~
@@ -431,10 +437,10 @@ begin
                     julia> A = 3\e[201~
              """)
     wait(c)
-    @test A == 3
-    @test foo(4)
-    @test T17599(3).a == 3
-    @test !foo(2)
+    @test Main.A == 3
+    @test Main.foo(4)
+    @test Main.T17599(3).a == 3
+    @test !Main.foo(2)
 
     sendrepl2("""\e[200~
             julia> goo(x) = x + 1
@@ -444,13 +450,13 @@ begin
             4\e[201~
              """)
     wait(c)
-    @test A == 4
-    @test goo(4) == 5
+    @test Main.A == 4
+    @test Main.goo(4) == 5
 
     # Test prefix removal only active in bracket paste mode
     sendrepl2("julia = 4\n julia> 3 && (A = 1)\n")
     wait(c)
-    @test A == 1
+    @test Main.A == 1
 
     # Close repl
     write(stdin_write, '\x04')
@@ -478,7 +484,7 @@ if !is_windows() || Sys.windows_version() >= Sys.WINDOWS_VISTA_VER
         if !ok
             LineEdit.transition(s,:abort)
         end
-        line = strip(takebuf_string(buf))
+        line = strip(String(take!(buf)))
         LineEdit.reset_state(s)
         return notify(c,line)
     end
@@ -505,7 +511,6 @@ let exename = Base.julia_cmd()
 # Test REPL in dumb mode
 if !is_windows()
     TestHelpers.with_fake_pty() do slave, master
-
         nENV = copy(ENV)
         nENV["TERM"] = "dumb"
         p = spawn(setenv(`$exename --startup-file=no --quiet`,nENV),slave,slave,slave)
@@ -521,7 +526,6 @@ if !is_windows()
         output = readuntil(master,' ')
         @test output == "1\r\nquit()\r\n1\r\n\r\njulia> "
         @test nb_available(master) == 0
-
     end
 end
 
@@ -532,3 +536,40 @@ if !is_windows() || Sys.windows_version() >= Sys.WINDOWS_VISTA_VER
     @test readstring(outs) == "1\n"
 end
 end # let exename
+
+# issue #19864:
+type Error19864 <: Exception; end
+function test19864()
+    @eval current_module() Base.showerror(io::IO, e::Error19864) = print(io, "correct19864")
+    buf = IOBuffer()
+    REPL.print_response(buf, Error19864(), [], false, false, nothing)
+    return String(take!(buf))
+end
+@test contains(test19864(), "correct19864")
+
+# Test containers in error messages are limited #18726
+let io = IOBuffer()
+    Base.display_error(io,
+        try
+            [][trues(6000)]
+        catch e
+            e
+        end, [])
+    @test length(String(take!(io))) < 1500
+end
+
+function test_replinit()
+    stdin_write, stdout_read, stdout_read, repl = fake_repl()
+    # Relies on implementation detail to make sure we only have the single
+    # replinit callback we want to test.
+    saved_replinit = copy(Base.repl_hooks)
+    slot = Ref(false)
+    # Create a closure from a newer world to check if `_atreplinit`
+    # can run it correctly
+    atreplinit(@eval(repl::Base.REPL.LineEditREPL->($slot[] = true)))
+    Base._atreplinit(repl)
+    @test slot[]
+    @test_throws MethodError Base.repl_hooks[1](repl)
+    copy!(Base.repl_hooks, saved_replinit)
+end
+test_replinit()

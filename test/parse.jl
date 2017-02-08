@@ -20,13 +20,14 @@ end
 
 # issue #9684
 let
+    undot(op) = Symbol(string(op)[2:end])
     for (ex1, ex2) in [("5.≠x", "5.!=x"),
                        ("5.≥x", "5.>=x"),
                        ("5.≤x", "5.<=x")]
         ex1 = parse(ex1); ex2 = parse(ex2)
         @test ex1.head === :call && (ex1.head === ex2.head)
         @test ex1.args[2] === 5 && ex2.args[2] === 5
-        @test is(eval(Main, ex1.args[1]), eval(Main, ex2.args[1]))
+        @test eval(Main, undot(ex1.args[1])) === eval(Main, undot(ex2.args[1]))
         @test ex1.args[3] === :x && (ex1.args[3] === ex2.args[3])
     end
 end
@@ -173,17 +174,17 @@ macro f(args...) end; @f ""
 @test_throws ParseError parse("(1 2)") # issue #15248
 
 # integer parsing
-@test is(parse(Int32,"0",36),Int32(0))
-@test is(parse(Int32,"1",36),Int32(1))
-@test is(parse(Int32,"9",36),Int32(9))
-@test is(parse(Int32,"A",36),Int32(10))
-@test is(parse(Int32,"a",36),Int32(10))
-@test is(parse(Int32,"B",36),Int32(11))
-@test is(parse(Int32,"b",36),Int32(11))
-@test is(parse(Int32,"F",36),Int32(15))
-@test is(parse(Int32,"f",36),Int32(15))
-@test is(parse(Int32,"Z",36),Int32(35))
-@test is(parse(Int32,"z",36),Int32(35))
+@test parse(Int32,"0",36) === Int32(0)
+@test parse(Int32,"1",36) === Int32(1)
+@test parse(Int32,"9",36) === Int32(9)
+@test parse(Int32,"A",36) === Int32(10)
+@test parse(Int32,"a",36) === Int32(10)
+@test parse(Int32,"B",36) === Int32(11)
+@test parse(Int32,"b",36) === Int32(11)
+@test parse(Int32,"F",36) === Int32(15)
+@test parse(Int32,"f",36) === Int32(15)
+@test parse(Int32,"Z",36) === Int32(35)
+@test parse(Int32,"z",36) === Int32(35)
 
 @test parse(Int,"0") == 0
 @test parse(Int,"-0") == 0
@@ -325,10 +326,10 @@ parse("""
 
 # issue #13302
 let p = parse("try
-           a
-       catch
-           b, c = t
-       end")
+            a
+        catch
+            b, c = t
+        end")
     @test isa(p,Expr) && p.head === :try
     @test p.args[2] === false
     @test p.args[3].args[end] == parse("b,c = t")
@@ -383,6 +384,9 @@ end
 @test parse("x<:y<:z").head === :comparison
 @test parse("x>:y<:z").head === :comparison
 
+# reason PR #19765, <- operator, was reverted
+@test -2<-1 # DO NOT ADD SPACES
+
 # issue #11169
 uncalled(x) = @test false
 fret() = uncalled(return true)
@@ -413,9 +417,28 @@ test_parseerror("0x1.0p", "invalid numeric constant \"0x1.0\"")
               try = "No"
            """)) == Expr(:error, "unexpected \"=\"")
 
+# issue #19861 make sure macro-expansion happens in the newest world for top-level expression
+@test eval(Base.parse_input_line("""
+           macro X19861()
+               return 23341
+           end
+           @X19861
+           """)::Expr) == 23341
+
+# test parse_input_line for a streaming IO input
+let b = IOBuffer("""
+                 let x = x
+                     x
+                 end
+                 f()
+                 """)
+    @test Base.parse_input_line(b) == Expr(:let, Expr(:block, Expr(:line, 2, :none), :x), Expr(:(=), :x, :x))
+    @test Base.parse_input_line(b) == Expr(:call, :f)
+    @test Base.parse_input_line(b) === nothing
+end
+
 # issue #15763
-# TODO enable post-0.5
-#test_parseerror("if\nfalse\nend", "missing condition in \"if\" at none:1")
+test_parseerror("if\nfalse\nend", "missing condition in \"if\" at none:1")
 test_parseerror("if false\nelseif\nend", "missing condition in \"elseif\" at none:2")
 
 # issue #15828
@@ -521,11 +544,11 @@ end
 @test_throws ParseError parse("{x=>y for (x,y) in zip([1,2,3],[4,5,6])}")
 #@test_throws ParseError parse("{:a=>1, :b=>2}")
 
+@test parse("A=>B") == Expr(:call, :(=>), :A, :B)
+
 # this now is parsed as getindex(Pair{Any,Any}, ...)
 @test_throws MethodError eval(parse("(Any=>Any)[]"))
 @test_throws MethodError eval(parse("(Any=>Any)[:a=>1,:b=>2]"))
-# to be removed post 0.5
-#@test_throws MethodError eval(parse("(Any=>Any)[x=>y for (x,y) in zip([1,2,3],[4,5,6])]"))
 
 # make sure base can be any Integer
 for T in (Int, BigInt)
@@ -598,6 +621,20 @@ end
               local x = 1
               end")) == Expr(:error, "variable \"x\" declared both local and global")
 
+@test expand(parse("let
+              local x = 2
+              local x = 1
+              end")) == Expr(:error, "local \"x\" declared twice")
+
+@test expand(parse("let x
+                  local x = 1
+              end")) == Expr(:error, "local \"x\" declared twice")
+
+@test expand(parse("let x = 2
+                  local x = 1
+              end")) == Expr(:error, "local \"x\" declared twice")
+
+
 # make sure front end can correctly print values to error messages
 let ex = expand(parse("\"a\"=1"))
     @test ex == Expr(:error, "invalid assignment location \"\"a\"\"")
@@ -641,7 +678,7 @@ module A15838
     const x = :a
 end
 module B15838
-    import A15838.@f
+    import ..A15838.@f
     macro f(x); return :x; end
     const x = :b
 end
@@ -811,3 +848,87 @@ end
 ```.head == :if
 
 end
+
+# issue 18756
+module Mod18756
+type Type
+end
+end
+@test method_exists(Mod18756.Type, ())
+
+# issue 18002
+@test parse("typealias a (Int)") == Expr(:typealias, :a, :Int)
+@test parse("typealias b (Int,)") == Expr(:typealias, :b, Expr(:tuple, :Int))
+@test parse("typealias Foo{T} Bar{T}") == Expr(:typealias, Expr(:curly, :Foo, :T), Expr(:curly, :Bar, :T))
+
+# don't insert push_loc for filename `none` at the top level
+let ex = expand(parse("""
+begin
+    x = 1
+end"""))
+    @test !any(x->(x == Expr(:meta, :push_loc, :none)), ex.args)
+end
+
+# Check qualified string macros
+Base.r"regex" == r"regex"
+
+module QualifiedStringMacro
+module SubModule
+macro x_str(x)
+    1
+end
+macro y_cmd(x)
+    2
+end
+end
+end
+
+@test QualifiedStringMacro.SubModule.x"" === 1
+@test QualifiedStringMacro.SubModule.y`` === 2
+
+let ..(x,y) = x + y
+    @test 3 .. 4 === 7
+end
+
+# issue #7669
+@test parse("@a(b=1, c=2)") == Expr(:macrocall, Symbol("@a"), :(b=1), :(c=2))
+
+# issue #19685
+let f = function (x; kw...)
+            return (x, kw)
+        end,
+    g = function (x; a = 2)
+            return (x, a)
+        end
+    @test f(1) == (1, Any[])
+    @test g(1) == (1, 2)
+end
+
+# normalization of Unicode symbols (#19464)
+let ε=1, μ=2, x=3, î=4
+    # issue #5434 (mu vs micro):
+    @test parse("\u00b5") === parse("\u03bc")
+    @test µ == μ == 2
+    # NFC normalization of identifiers:
+    @test parse("\u0069\u0302") === parse("\u00ee")
+    @test î == 4
+    # latin vs greek ε (#14751)
+    @test parse("\u025B") === parse("\u03B5")
+    @test ɛ == ε == 1
+end
+
+# issue #8925
+let
+    global const (c8925, d8925) = (3, 4)
+end
+@test c8925 == 3 && isconst(:c8925)
+@test d8925 == 4 && isconst(:d8925)
+
+# issue #18754: parse ccall as a regular function
+@test parse("ccall([1], 2)[3]") == Expr(:ref, Expr(:call, :ccall, Expr(:vect, 1), 2), 3)
+@test parse("ccall(a).member") == Expr(:., Expr(:call, :ccall, :a), QuoteNode(:member))
+
+# Check that the body of a `where`-qualified short form function definition gets
+# a :block for its body
+short_where_call = :(f(x::T) where T = T)
+@test short_where_call.args[2].head == :block

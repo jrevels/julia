@@ -281,6 +281,16 @@ kw"'"
      1+1im  2+1im
      3+1im  4+1im
 
+    julia> v = [1,2,3]
+    3-element Array{Int64,1}:
+     1
+     2
+     3
+
+    julia> v.'
+    1×3 RowVector{Int64,Array{Int64,1}}:
+     1  2  3
+
 """
 kw".'"
 
@@ -631,7 +641,7 @@ Introduce a new name for an already expressible type. For example, in `base/boot
 `UInt` is type aliased to either `UInt64` or `UInt32` as appropriate for the size of
 pointers on the system:
 
-    if is(Int,Int64)
+    if Int === Int64
         typealias UInt UInt64
     else
         typealias UInt UInt32

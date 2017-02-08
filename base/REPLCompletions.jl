@@ -281,11 +281,13 @@ function get_type_call(expr::Expr)
         found ? push!(args, typ) : push!(args, Any)
     end
     # use _methods_by_ftype as the function is supplied as a type
-    mt = Base._methods_by_ftype(Tuple{ft, args...}, -1)
+    world = typemax(UInt)
+    mt = Base._methods_by_ftype(Tuple{ft, args...}, -1, world)
     length(mt) == 1 || return (Any, false)
     m = first(mt)
     # Typeinference
-    return_type = Core.Inference.typeinf_type(m[3], m[1], m[2])
+    params = Core.Inference.InferenceParams(world)
+    return_type = Core.Inference.typeinf_type(m[3], m[1], m[2], true, params)
     return_type === nothing && return (Any, false)
     return (return_type, true)
 end
@@ -313,7 +315,7 @@ function get_type(sym, fn)
 end
 # Method completion on function call expression that look like :(max(1))
 function complete_methods(ex_org::Expr)
-    args_ex = DataType[]
+    args_ex = Any[]
     func, found = get_value(ex_org.args[1], Main)
     !found && return String[]
     for ex in ex_org.args[2:end]
@@ -328,9 +330,10 @@ function complete_methods(ex_org::Expr)
     io = IOBuffer()
     for method in ml
         # Check if the method's type signature intersects the input types
-        if typeintersect(Tuple{method.sig.parameters[1 : min(na, end)]...}, t_in) != Union{}
+        ms = method.sig
+        if typeintersect(Base.rewrap_unionall(Tuple{Base.unwrap_unionall(ms).parameters[1 : min(na, end)]...}, ms), t_in) != Union{}
             show(io, method, kwtype=kwtype)
-            push!(out, takebuf_string(io))
+            push!(out, String(take!(io)))
         end
     end
     return out
@@ -376,10 +379,10 @@ function bslash_completions(string, pos)
         # return possible matches; these cannot be mixed with regular
         # Julian completions as only latex / emoji symbols contain the leading \
         if startswith(s, "\\:") # emoji
-            emoji_names = filter(k -> startswith(k, s), keys(emoji_symbols))
+            emoji_names = Iterators.filter(k -> startswith(k, s), keys(emoji_symbols))
             return (true, (sort!(collect(emoji_names)), slashpos:pos, true))
         else # latex
-            latex_names = filter(k -> startswith(k, s), keys(latex_symbols))
+            latex_names = Iterators.filter(k -> startswith(k, s), keys(latex_symbols))
             return (true, (sort!(collect(latex_names)), slashpos:pos, true))
         end
     end
@@ -413,6 +416,16 @@ function dict_identifier_key(str,tag)
     return (obj, partial_key, begin_of_key)
 end
 
+# This needs to be a separate non-inlined function, see #19441
+@noinline function find_dict_matches(identifier, partial_key)
+    matches = []
+    for key in keys(identifier)
+        rkey = repr(key)
+        startswith(rkey,partial_key) && push!(matches,rkey)
+    end
+    return matches
+end
+
 function completions(string, pos)
     # First parse everything up to the current position
     partial = string[1:pos]
@@ -424,13 +437,9 @@ function completions(string, pos)
     identifier, partial_key, loc = dict_identifier_key(partial,inc_tag)
     if identifier !== nothing
         if partial_key !== nothing
-            matches = []
-            for key in keys(identifier)
-                rkey = repr(key)
-                startswith(rkey,partial_key) && push!(matches,rkey)
-            end
+            matches = find_dict_matches(identifier, partial_key)
             length(matches)==1 && (length(string) <= pos || string[pos+1] != ']') && (matches[1]*="]")
-            length(matches)>0 && return sort(matches), loc:pos, true
+            length(matches)>0 && return sort!(matches), loc:pos, true
         else
             return String[], 0:-1, false
         end
@@ -449,7 +458,7 @@ function completions(string, pos)
             paths[1] *= "\""
         end
         #Latex symbols can be completed for strings
-        (success || inc_tag==:cmd) && return sort(paths), r, success
+        (success || inc_tag==:cmd) && return sort!(paths), r, success
     end
 
     ok, ret = bslash_completions(string, pos)
@@ -485,7 +494,7 @@ function completions(string, pos)
         s = string[startpos:pos]
         if dotpos <= startpos
             for dir in [Pkg.dir(); LOAD_PATH; pwd()]
-                isdir(dir) || continue
+                dir isa AbstractString && isdir(dir) || continue
                 for pname in readdir(dir)
                     if pname[1] != '.' && pname != "METADATA" &&
                         pname != "REQUIRE" && startswith(pname, s)
@@ -542,7 +551,7 @@ function completions(string, pos)
         end
     end
     append!(suggestions, complete_symbol(s, ffunc))
-    return sort(unique(suggestions)), (dotpos+1):pos, true
+    return sort!(unique(suggestions)), (dotpos+1):pos, true
 end
 
 function shell_completions(string, pos)

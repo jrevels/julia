@@ -42,6 +42,7 @@ function resolve(reqs::Requires, deps::Dict{String,Dict{VersionNumber,Available}
         # verify solution (debug code) and enforce its optimality
         @assert verify_solution(sol, interface)
         enforce_optimality!(sol, interface)
+        @assert verify_solution(sol, interface)
     end
 
     # return the solution as a Dict mapping package_name => sha1
@@ -66,7 +67,7 @@ function sanity_check(deps::Dict{String,Dict{VersionNumber,Available}},
 
     vers = Array{Tuple{String,VersionNumber,VersionNumber}}(0)
     for (p,d) in deps, vn in keys(d)
-        lvns = VersionNumber[filter(vn2->(vn2>vn), keys(d))...]
+        lvns = VersionNumber[Iterators.filter(vn2->(vn2>vn), keys(d))...]
         nvn = isempty(lvns) ? typemax(VersionNumber) : minimum(lvns)
         push!(vers, (p,vn,nvn))
     end
@@ -117,8 +118,7 @@ function sanity_check(deps::Dict{String,Dict{VersionNumber,Available}},
             end
         end
         if ok
-            let
-                p0 = interface.pdict[p]
+            let p0 = interface.pdict[p]
                 svn = red_pvers[p0][sol[p0]]
                 @assert svn == vn
             end

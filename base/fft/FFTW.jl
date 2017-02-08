@@ -211,8 +211,8 @@ for P in (:cFFTWPlan, :rFFTWPlan, :r2rFFTWPlan) # complex, r2c/c2r, and r2r
             flags::UInt32 # planner flags
             region::Any # region (iterable) of dims that are transormed
             pinv::ScaledPlan
-            function $P(plan::PlanPtr, flags::Integer, R::Any,
-                        X::StridedArray{T, N}, Y::StridedArray)
+            function $P{T,K,inplace,N}(plan::PlanPtr, flags::Integer, R::Any,
+                                       X::StridedArray{T, N}, Y::StridedArray) where {T<:fftwNumber,K,inplace,N}
                 p = new(plan, size(X), size(Y), strides(X), strides(Y),
                         alignment_of(X), alignment_of(Y), flags, R)
                 finalizer(p, destroy_plan)
@@ -282,7 +282,10 @@ sprint_plan_{T<:fftwDouble}(plan::FFTWPlan{T}) =
 sprint_plan_{T<:fftwSingle}(plan::FFTWPlan{T}) =
     ccall((:fftwf_sprint_plan,libfftwf), Ptr{UInt8}, (PlanPtr,), plan)
 function sprint_plan(plan::FFTWPlan)
-    unsafe_wrap(String, sprint_plan_(plan), true)
+    p = sprint_plan_(plan)
+    str = unsafe_string(p)
+    Libc.free(p)
+    return str
 end
 
 function show{T,K,inplace}(io::IO, p::cFFTWPlan{T,K,inplace})
@@ -453,7 +456,6 @@ end
 
 for (Tr,Tc,fftw,lib) in ((:Float64,:Complex128,"fftw",libfftw),
                          (:Float32,:Complex64,"fftwf",libfftwf))
-
     @eval function (::Type{cFFTWPlan{$Tc,K,inplace,N}}){K,inplace,N}(X::StridedArray{$Tc,N},
                                                                      Y::StridedArray{$Tc,N},
                                                                      region, flags::Integer, timelimit::Real)
@@ -566,7 +568,7 @@ end
 # (FIXME: is there a way to use the Julia promotion rules more cleverly here?)
 fftwcomplex{T<:fftwComplex}(X::StridedArray{T}) = X
 fftwcomplex{T<:fftwReal}(X::AbstractArray{T}) =
-    copy!(Array{typeof(complex(one(T)))}(size(X)), X)
+    copy!(Array{typeof(complex(zero(T)))}(size(X)), X)
 fftwcomplex{T<:Real}(X::AbstractArray{T}) = copy!(Array{Complex128}(size(X)),X)
 fftwcomplex{T<:Complex}(X::AbstractArray{T}) =
     copy!(Array{Complex128}(size(X)), X)
@@ -715,9 +717,9 @@ end
 """
     plan_rfft(A [, dims]; flags=FFTW.ESTIMATE;  timelimit=Inf)
 
-Pre-plan an optimized real-input FFT, similar to [`plan_fft`](:func:`plan_fft`) except for
-[`rfft`](:func:`rfft`) instead of [`fft`](:func:`fft`). The first two arguments, and the
-size of the transformed result, are the same as for [`rfft`](:func:`rfft`).
+Pre-plan an optimized real-input FFT, similar to [`plan_fft`](@ref) except for
+[`rfft`](@ref) instead of [`fft`](@ref). The first two arguments, and the
+size of the transformed result, are the same as for [`rfft`](@ref).
 """
 plan_rfft
 
@@ -725,9 +727,9 @@ plan_rfft
     plan_brfft(A, d [, dims]; flags=FFTW.ESTIMATE;  timelimit=Inf)
 
 Pre-plan an optimized real-input unnormalized transform, similar to
-[`plan_rfft`](:func:`plan_rfft`) except for [`brfft`](:func:`brfft`) instead of
-[`rfft`](:func:`rfft`). The first two arguments and the size of the transformed result, are
-the same as for [`brfft`](:func:`brfft`).
+[`plan_rfft`](@ref) except for [`brfft`](@ref) instead of
+[`rfft`](@ref). The first two arguments and the size of the transformed result, are
+the same as for [`brfft`](@ref).
 """
 plan_brfft
 
@@ -781,14 +783,14 @@ dimensions (e.g. an integer, range, tuple, or array) to transform
 along. `kind[i]` is then the transform type for `dims[i]`,
 with `kind[end]` being used for `i > length(kind)`.
 
-See also [`plan_r2r`](:func:`plan_r2r`) to pre-plan optimized r2r transforms.
+See also [`plan_r2r`](@ref) to pre-plan optimized r2r transforms.
 """
 FFTW.r2r
 
 """
     r2r!(A, kind [, dims])
 
-Same as [`r2r`](:func:`r2r`), but operates in-place on `A`, which must be
+Same as [`r2r`](@ref), but operates in-place on `A`, which must be
 an array of real or complex floating-point numbers.
 """
 FFTW.r2r!
@@ -796,16 +798,16 @@ FFTW.r2r!
 """
     plan_r2r!(A, kind [, dims [, flags [, timelimit]]])
 
-Similar to [`plan_fft`](:func:`Base.plan_fft`), but corresponds to [`r2r!`](:func:`r2r!`).
+Similar to [`plan_fft`](@ref), but corresponds to [`r2r!`](@ref).
 """
 FFTW.plan_r2r!
 
 """
     plan_r2r(A, kind [, dims [, flags [, timelimit]]])
 
-Pre-plan an optimized r2r transform, similar to [`plan_fft`](:func:`Base.plan_fft`)
+Pre-plan an optimized r2r transform, similar to [`plan_fft`](@ref)
 except that the transforms (and the first three arguments)
-correspond to [`r2r`](:func:`r2r`) and [`r2r!`](:func:`r2r!`), respectively.
+correspond to [`r2r`](@ref) and [`r2r!`](@ref), respectively.
 """
 FFTW.plan_r2r
 

@@ -10,6 +10,8 @@ import ..LinAlg.BLAS.@blasfunc
 import ..LinAlg: BlasFloat, Char, BlasInt, LAPACKException,
     DimensionMismatch, SingularException, PosDefException, chkstride1, checksquare
 
+using Base: iszero
+
 #Generic LAPACK error handlers
 """
 Handle only negative LAPACK error codes
@@ -3681,8 +3683,8 @@ for (stev, stebz, stegr, stein, elty) in
             m = Array{BlasInt}(1)
             w = similar(dv, $elty, n)
             ldz = jobz == 'N' ? 1 : n
-            Z = similar(dv, $elty, ldz, n)
-            isuppz = similar(dv, BlasInt, 2n)
+            Z = similar(dv, $elty, ldz, range == 'I' ? iu-il+1 : n)
+            isuppz = similar(dv, BlasInt, 2*size(Z, 2))
             work = Array{$elty}(1)
             lwork = BlasInt(-1)
             iwork = Array{BlasInt}(1)
@@ -3708,7 +3710,7 @@ for (stev, stebz, stegr, stein, elty) in
                     iwork = Array{BlasInt}(liwork)
                 end
             end
-            w[1:m[1]], Z[:,1:m[1]]
+            m[1] == length(w) ? w : w[1:m[1]], m[1] == size(Z, 2) ? Z : Z[:,1:m[1]]
         end
 
         function stein!(dv::StridedVector{$elty}, ev_in::StridedVector{$elty}, w_in::StridedVector{$elty}, iblock_in::StridedVector{BlasInt}, isplit_in::StridedVector{BlasInt})
@@ -5502,7 +5504,7 @@ for (gees, gges, elty) in
                     work = Array{$elty}(lwork)
                 end
             end
-            A, vs, all(wi .== 0) ? wr : complex(wr, wi)
+            A, vs, iszero(wi) ? wr : complex.(wr, wi)
         end
 
         # *     .. Scalar Arguments ..
@@ -5551,7 +5553,7 @@ for (gees, gges, elty) in
                     work = Array{$elty}(lwork)
                 end
             end
-            A, B, complex(alphar, alphai), beta, vsl[1:(jobvsl == 'V' ? n : 0),:], vsr[1:(jobvsr == 'V' ? n : 0),:]
+            A, B, complex.(alphar, alphai), beta, vsl[1:(jobvsl == 'V' ? n : 0),:], vsr[1:(jobvsr == 'V' ? n : 0),:]
         end
     end
 end
@@ -5751,7 +5753,7 @@ for (trexc, trsen, tgsen, elty) in
                     iwork  = Array{BlasInt}(liwork)
                 end
             end
-            T, Q, all(wi .== 0) ? wr : complex(wr, wi)
+            T, Q, iszero(wi) ? wr : complex.(wr, wi)
         end
         trsen!(select::StridedVector{BlasInt}, T::StridedMatrix{$elty}, Q::StridedMatrix{$elty}) =
             trsen!('N', 'V', select, T, Q)
@@ -5820,7 +5822,7 @@ for (trexc, trsen, tgsen, elty) in
                     iwork = Array{BlasInt}(liwork)
                 end
             end
-            S, T, complex(alphar, alphai), beta, Q, Z
+            S, T, complex.(alphar, alphai), beta, Q, Z
         end
     end
 end

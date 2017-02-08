@@ -37,6 +37,11 @@ widen{T}(::Type{Complex{T}}) = Complex{widen(T)}
     real(z)
 
 Return the real part of the complex number `z`.
+
+```jldoctest
+julia> real(1 + 3im)
+1
+```
 """
 real(z::Complex) = z.re
 
@@ -44,6 +49,11 @@ real(z::Complex) = z.re
     imag(z)
 
 Return the imaginary part of the complex number `z`.
+
+```jldoctest
+julia> imag(1 + 3im)
+3
+```
 """
 imag(z::Complex) = z.im
 real(x::Real) = x
@@ -53,31 +63,79 @@ imag(x::Real) = zero(x)
     reim(z)
 
 Return both the real and imaginary parts of the complex number `z`.
+
+```jldoctest
+julia> reim(1 + 3im)
+(1, 3)
+```
 """
 reim(z) = (real(z), imag(z))
 
+"""
+    real(T::Type)
+
+Returns the type that represents the real part of a value of type `T`.
+e.g: for `T == Complex{R}`, returns `R`.
+Equivalent to `typeof(real(zero(T)))`.
+
+```jldoctest
+julia> real(Complex{Int})
+Int64
+
+julia> real(Float64)
+Float64
+```
+"""
+real(T::Type) = typeof(real(zero(T)))
 real{T<:Real}(::Type{T}) = T
 real{T<:Real}(::Type{Complex{T}}) = T
 
-complex{T<:Real}(::Type{T}) = Complex{T}
-complex{T<:Real}(::Type{Complex{T}}) = Complex{T}
+"""
+    isreal(x) -> Bool
 
+Test whether `x` or all its elements are numerically equal to some real number.
+
+```jldoctest
+julia> isreal(5.)
+true
+
+julia> isreal([4.; complex(0,1)])
+false
+```
+"""
 isreal(x::Real) = true
-isreal(z::Complex) = imag(z) == 0
-"""
-    isimag(z) -> Bool
-
-Test whether `z` is purely imaginary, i.e. has a real part equal to 0.
-"""
-isimag(z::Number) = real(z) == 0
+isreal(z::Complex) = iszero(imag(z))
 isinteger(z::Complex) = isreal(z) & isinteger(real(z))
 isfinite(z::Complex) = isfinite(real(z)) & isfinite(imag(z))
 isnan(z::Complex) = isnan(real(z)) | isnan(imag(z))
 isinf(z::Complex) = isinf(real(z)) | isinf(imag(z))
+iszero(z::Complex) = iszero(real(z)) & iszero(imag(z))
 
-complex(x::Real, y::Real) = Complex(x, y)
-complex(x::Real) = Complex(x)
+"""
+    complex(r, [i])
+
+Convert real numbers or arrays to complex. `i` defaults to zero.
+"""
 complex(z::Complex) = z
+complex(x::Real) = Complex(x)
+complex(x::Real, y::Real) = Complex(x, y)
+
+"""
+    complex(T::Type)
+
+Returns an appropriate type which can represent a value of type `T` as a complex number.
+Equivalent to `typeof(complex(zero(T)))`.
+
+```jldoctest
+julia> complex(Complex{Int})
+Complex{Int64}
+
+julia> complex(Int)
+Complex{Int64}
+```
+"""
+complex{T<:Real}(::Type{T}) = Complex{T}
+complex{T<:Real}(::Type{Complex{T}}) = Complex{T}
 
 flipsign(x::Complex, y::Real) = ifelse(signbit(y), -x, x)
 
@@ -126,8 +184,8 @@ const hash_0_imag = hash(0, h_imag)
 
 function hash(z::Complex, h::UInt)
     # TODO: with default argument specialization, this would be better:
-    # hash(real(z), h $ hash(imag(z), h $ h_imag) $ hash(0, h $ h_imag))
-    hash(real(z), h $ hash(imag(z), h_imag) $ hash_0_imag)
+    # hash(real(z), h ⊻ hash(imag(z), h ⊻ h_imag) ⊻ hash(0, h ⊻ h_imag))
+    hash(real(z), h ⊻ hash(imag(z), h_imag) ⊻ hash_0_imag)
 end
 
 ## generic functions of complex numbers ##
@@ -136,6 +194,11 @@ end
     conj(z)
 
 Compute the complex conjugate of a complex number `z`.
+
+```jldoctest
+julia> conj(1 + 3im)
+1 - 3im
+```
 """
 conj(z::Complex) = Complex(real(z),-imag(z))
 abs(z::Complex)  = hypot(real(z), imag(z))
@@ -201,7 +264,7 @@ muladd(z::Complex, w::Complex, x::Real) =
     Complex(muladd(real(z), real(w), x) - imag(z)*imag(w), # TODO: use mulsub given #15985
             muladd(real(z), imag(w), imag(z) * real(w)))
 
-/(a::Real, z::Complex) = a*inv(z)
+/{R<:Real,S<:Complex}(a::R, z::S) = (T = promote_type(R,S); a*inv(T(z)))
 /(z::Complex, x::Real) = Complex(real(z)/x, imag(z)/x)
 
 function /{T<:Real}(a::Complex{T}, b::Complex{T})
@@ -796,8 +859,8 @@ end
     round(z, RoundingModeReal, RoundingModeImaginary)
 
 Returns the nearest integral value of the same type as the complex-valued `z` to `z`,
-breaking ties using the specified [`RoundingMode`](:obj:`RoundingMode`)s. The first
-[`RoundingMode`](:obj:`RoundingMode`) is used for rounding the real components while the
+breaking ties using the specified [`RoundingMode`](@ref)s. The first
+[`RoundingMode`](@ref) is used for rounding the real components while the
 second is used for rounding the imaginary components.
 """
 function round{T<:AbstractFloat, MR, MI}(z::Complex{T}, ::RoundingMode{MR}, ::RoundingMode{MI})
@@ -828,35 +891,6 @@ function complex{T}(A::AbstractArray{T})
     convert(AbstractArray{typeof(complex(zero(T)))}, A)
 end
 
-big{T<:Integer,N}(A::AbstractArray{Complex{T},N}) = convert(AbstractArray{Complex{BigInt},N}, A)
-big{T<:AbstractFloat,N}(A::AbstractArray{Complex{T},N}) = convert(AbstractArray{Complex{BigFloat},N}, A)
-
 ## promotion to complex ##
 
 _default_type(T::Type{Complex}) = Complex{Int}
-promote_array_type{S<:Union{Complex, Real}, T<:AbstractFloat}(F, ::Type{S}, ::Type{Complex{T}}, ::Type) = Complex{T}
-
-function complex{S<:Real,T<:Real}(A::AbstractArray{S}, B::AbstractArray{T})
-    if size(A) != size(B); throw(DimensionMismatch()); end
-    F = similar(A, typeof(complex(zero(S),zero(T))))
-    for (iF, iA, iB) in zip(eachindex(F), eachindex(A), eachindex(B))
-        @inbounds F[iF] = complex(A[iA], B[iB])
-    end
-    return F
-end
-
-function complex{T<:Real}(A::Real, B::AbstractArray{T})
-    F = similar(B, typeof(complex(A,zero(T))))
-    for (iF, iB) in zip(eachindex(F), eachindex(B))
-        @inbounds F[iF] = complex(A, B[iB])
-    end
-    return F
-end
-
-function complex{T<:Real}(A::AbstractArray{T}, B::Real)
-    F = similar(A, typeof(complex(zero(T),B)))
-    for (iF, iA) in zip(eachindex(F), eachindex(A))
-        @inbounds F[iF] = complex(A[iA], B)
-    end
-    return F
-end
